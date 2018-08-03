@@ -1,17 +1,12 @@
-# -*- coding: utf-8 -*-
-"""
-Solution to the Backyard Flyer Project.
-"""
-
+import argparse
 import time
 from enum import Enum
 
 import numpy as np
 
 from udacidrone import Drone
-from udacidrone.connection import MavlinkConnection, WebSocketConnection  # noqa: F401
+from udacidrone.connection import CrazyflieConnection  # noqa: F401
 from udacidrone.messaging import MsgID
-
 
 class States(Enum):
     MANUAL = 0
@@ -40,23 +35,45 @@ class BackyardFlyer(Drone):
         self.register_callback(MsgID.STATE, self.state_callback)
 
     def local_position_callback(self):
+        ### added code ###
+        if self.flight_state == States.MANUAL:
+            self.takeoff(0.5)
+            self.target_position[2] = 0.5
+            self.flight_state = States.TAKEOFF
+        ### added code ###
+
         if self.flight_state == States.TAKEOFF:
             if -1.0 * self.local_position[2] > 0.95 * self.target_position[2]:
                 self.all_waypoints = self.calculate_box()
                 self.waypoint_transition()
+
         elif self.flight_state == States.WAYPOINT:
-            if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < 1.0:
+            # DEBUG
+            print("curr pos: ({}, {}, {}), desired pos: ({}, {}, {})".format(
+                self.local_position[0], self.local_position[1], self.local_position[2],
+                self.target_position[0], self.target_position[1], self.target_position[2]))
+
+            if np.linalg.norm(self.target_position[0:2] - self.local_position[0:2]) < 0.2:
+                print("reached waypoint!!!!")
                 if len(self.all_waypoints) > 0:
                     self.waypoint_transition()
                 else:
-                    if np.linalg.norm(self.local_velocity[0:2]) < 1.0:
+                    if np.linalg.norm(self.local_velocity[0:2]) < 0.5:
                         self.landing_transition()
 
     def velocity_callback(self):
+        ### added code ###
         if self.flight_state == States.LANDING:
-            if self.global_position[2] - self.global_home[2] < 0.1:
-                if abs(self.local_position[2]) < 0.01:
-                    self.disarming_transition()
+            if abs(self.local_position[2] < 0.01):
+                print("vehicle is down!")
+                self.manual_transition()
+        ### added code ###
+
+        # if self.flight_state == States.LANDING:
+        #     # TODO: need a better stop criteria, this is incredibly specific to
+        #     if self.global_position[2] - self.global_home[2] < 0.1:
+        #         if abs(self.local_position[2]) < 0.01:
+        #             self.disarming_transition()
 
     def state_callback(self):
         if self.in_mission:
@@ -71,7 +88,11 @@ class BackyardFlyer(Drone):
 
     def calculate_box(self):
         print("Setting Home")
-        local_waypoints = [[10.0, 0.0, 3.0], [10.0, 10.0, 3.0], [0.0, 10.0, 3.0], [0.0, 0.0, 3.0]]
+        # local_waypoints = [[10.0, 0.0, -3.0], [10.0, 10.0, -3.0], [0.0, 10.0, -3.0], [0.0, 0.0, -3.0]]
+        cp = self.local_position
+        cp[2] = 0
+        local_waypoints = [cp + [1.0, 0.0, 0.5], cp + [1.0, 1.0, 0.5], cp + [.0, 1.0, 0.5], cp + [0.0, 0.0, 0.5]]
+
         return local_waypoints
 
     def arming_transition(self):
@@ -86,7 +107,7 @@ class BackyardFlyer(Drone):
     def takeoff_transition(self):
         print("takeoff transition")
         # self.global_home = np.copy(self.global_position)  # can't write to this variable!
-        target_altitude = 3.0
+        target_altitude = 2.0
         self.target_position[2] = target_altitude
         self.takeoff(target_altitude)
         self.flight_state = States.TAKEOFF
@@ -132,8 +153,15 @@ class BackyardFlyer(Drone):
 
 
 if __name__ == "__main__":
-    conn = MavlinkConnection('tcp:127.0.0.1:5760', threaded=False, PX4=False)
-    #conn = WebSocketConnection('ws://127.0.0.1:5760')
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--port', type=int, default=3001, help='Port number')
+    parser.add_argument('--host', type=str, default='0.0.0.0', help="host address, i.e. '127.0.0.1'")
+    args = parser.parse_args()
+
+    # conn = MavlinkConnection('tcp:{0}:{1}'.format(args.host, args.port))
+    # conn = WebSocketConnection('ws://{0}:{1}'.format(args.host, args.port))
+    uri = 'radio://0/80/2M'
+    conn = CrazyflieConnection(uri)
     drone = BackyardFlyer(conn)
     time.sleep(2)
     drone.start()
